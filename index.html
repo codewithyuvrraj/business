@@ -5974,6 +5974,7 @@
                     console.error('Error uploading profile photo:', error);
                     this.showNotification(error.message || 'Failed to upload profile photo', 'error');
                 }
+            }
 
             async uploadDashboardImage(file) {
                 if (!file) return;
