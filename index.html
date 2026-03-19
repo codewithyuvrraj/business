@@ -3258,13 +3258,13 @@
         const IK_PRIV_KEY = 'private_zfdTGtZDbUPUhhf60japgNapHwc=';
 
         window.uploadToImageKit = async function(file, folder = 'uploads') {
-            const fileName = `${folder}_${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+            const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload';
+            const fileName = `${folder}_${Date.now()}_${safeName}`;
             const fd = new FormData();
             fd.append('file', file);
             fd.append('fileName', fileName);
             fd.append('folder', '/' + folder);
             fd.append('publicKey', IK_PUB_KEY);
-            // ImageKit upload API — private key as password in Basic auth (username=private_key, password=empty)
             const authStr = btoa(IK_PRIV_KEY + ':');
             const res = await fetch('https://upload.imagekit.io/api/v1/files/upload', {
                 method: 'POST',
@@ -3274,6 +3274,20 @@
             const result = await res.json();
             if (!res.ok || result.message) throw new Error(result.message || 'ImageKit upload failed');
             return result.url;
+        };
+
+        // Smart upload: jpg/jpeg → Supabase storage, all other formats → ImageKit
+        window.smartUpload = async function(file, supabaseBucket, ikFolder) {
+            const ext = file.name.split('.').pop().toLowerCase();
+            const isJpg = ext === 'jpg' || ext === 'jpeg' || file.type === 'image/jpeg';
+            if (isJpg && window.supabaseClient) {
+                const fileName = `${ikFolder}_${Date.now()}.jpg`;
+                const { error } = await window.supabaseClient.storage.from(supabaseBucket).upload(fileName, file, { upsert: true });
+                if (error) throw new Error('Upload failed: ' + error.message);
+                const { data } = window.supabaseClient.storage.from(supabaseBucket).getPublicUrl(fileName);
+                return data.publicUrl;
+            }
+            return await window.uploadToImageKit(file, ikFolder);
         };
 
         // ===== AUDIO RECORDER =====
@@ -4859,16 +4873,10 @@
                         const profilePicFile = document.getElementById('registerProfilePic')?.files?.[0];
                         if (profilePicFile) {
                             try {
-                                const ext = profilePicFile.name.split('.').pop();
-                                const fileName = `avatar_${this.currentUser.id}_${Date.now()}.${ext}`;
-                                const { error: upErr } = await window.supabaseClient.storage.from('avatars').upload(fileName, profilePicFile, { upsert: true });
-                                if (!upErr) {
-                                    const { data: urlData } = window.supabaseClient.storage.from('avatars').getPublicUrl(fileName);
-                                    const photoUrl = urlData.publicUrl;
-                                    await window.nhost.graphql.request(`mutation U($id:uuid!,$url:String){update_profiles_by_pk(pk_columns:{id:$id},_set:{profile_picture_url:$url}){id}}`, { id: this.currentUser.id, url: photoUrl });
-                                    this.currentUser.avatar_url = photoUrl;
-                                    this.currentUser.profile_picture_url = photoUrl;
-                                }
+                                const photoUrl = await window.smartUpload(profilePicFile, 'avatars', 'avatars');
+                                await window.nhost.graphql.request(`mutation U($id:uuid!,$url:String){update_profiles_by_pk(pk_columns:{id:$id},_set:{profile_picture_url:$url}){id}}`, { id: this.currentUser.id, url: photoUrl });
+                                this.currentUser.avatar_url = photoUrl;
+                                this.currentUser.profile_picture_url = photoUrl;
                             } catch(e) { console.warn('Profile pic upload failed:', e); }
                         }
 
@@ -4876,15 +4884,9 @@
                         const dashFile = document.getElementById('registerDashPic')?.files?.[0];
                         if (dashFile) {
                             try {
-                                const ext = dashFile.name.split('.').pop();
-                                const fileName = `dashboard_${this.currentUser.id}_${Date.now()}.${ext}`;
-                                const { error: upErr } = await window.supabaseClient.storage.from('dashboard-images').upload(fileName, dashFile, { upsert: true });
-                                if (!upErr) {
-                                    const { data: urlData } = window.supabaseClient.storage.from('dashboard-images').getPublicUrl(fileName);
-                                    const imageUrl = urlData.publicUrl;
-                                    await window.nhost.graphql.request(`mutation U($id:uuid!,$url:String!){update_profiles_by_pk(pk_columns:{id:$id},_set:{dashboard_image_url:$url}){id}}`, { id: this.currentUser.id, url: imageUrl });
-                                    this.currentUser.dashboard_image_url = imageUrl;
-                                }
+                                const imageUrl = await window.smartUpload(dashFile, 'dashboard-images', 'dashboard');
+                                await window.nhost.graphql.request(`mutation U($id:uuid!,$url:String!){update_profiles_by_pk(pk_columns:{id:$id},_set:{dashboard_image_url:$url}){id}}`, { id: this.currentUser.id, url: imageUrl });
+                                this.currentUser.dashboard_image_url = imageUrl;
                             } catch(e) { console.warn('Dashboard image upload failed:', e); }
                         }
 
@@ -5948,46 +5950,31 @@
 
             async uploadProfilePhoto(file) {
                 try {
-                    if (!file.type.startsWith('image/')) throw new Error('Please select an image file');
-                    if (file.size > 5 * 1024 * 1024) throw new Error('Image size must be less than 5MB');
-                    
+                    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) throw new Error('Please select an image file');
+                    if (file.size > 20 * 1024 * 1024) throw new Error('File size must be less than 20MB');
                     this.showNotification('Uploading profile photo...', 'success');
-                    
-                    let photoUrl;
-                    
-                    if (window.isSupabaseEnabled) {
-                        const ext = file.name.split('.').pop();
-                        const fileName = `avatar_${this.currentUser.id}_${Date.now()}.${ext}`;
-                        const { error: uploadError } = await window.supabaseClient.storage
-                            .from('avatars')
-                            .upload(fileName, file, { upsert: true });
-                        if (uploadError) throw new Error('Upload failed: ' + uploadError.message);
-                        const { data: urlData } = window.supabaseClient.storage
-                            .from('avatars')
-                            .getPublicUrl(fileName);
-                        photoUrl = urlData.publicUrl;
-                    } else {
-                        photoUrl = URL.createObjectURL(file);
-                    }
-
+                    const photoUrl = await window.smartUpload(file, 'avatars', 'avatars');
                     if (window.isNhostEnabled) {
-                            const { error: updateError } = await this._nhostRequest(`
-                                mutation UpdateUserAvatar($id: uuid!, $url: String) {
-                                    update_profiles_by_pk(pk_columns: {id: $id}, _set: {profile_picture_url: $url}) {
-                                        id
-                                    }
-                                }
-                            `, { id: this.currentUser.id, url: photoUrl });
-                            if (updateError) throw new Error('DB update failed: ' + JSON.stringify(updateError));
-                        }
-                    
+                        const { error: updateError } = await this._nhostRequest(`
+                            mutation UpdateUserAvatar($id: uuid!, $url: String) {
+                                update_profiles_by_pk(pk_columns: {id: $id}, _set: {profile_picture_url: $url}) { id }
+                            }
+                        `, { id: this.currentUser.id, url: photoUrl });
+                        if (updateError) throw new Error('DB update failed: ' + JSON.stringify(updateError));
+                    }
                     this.currentUser.profile_picture_url = photoUrl;
                     this.currentUser.avatar_url = photoUrl;
                     localStorage.setItem('businessconnect_current_user', JSON.stringify(this.currentUser));
                     this.updateAccountAvatar();
-                    
                     const profilePreview = document.getElementById('profilePreview');
                     if (profilePreview) profilePreview.innerHTML = `<img src="${photoUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
+                    this.loadHomeFeed();
+                    this.showNotification('Profile photo updated successfully!', 'success');
+                } catch (error) {
+                    console.error('Error uploading profile photo:', error);
+                    this.showNotification(error.message || 'Failed to upload profile photo', 'error');
+                }
+            }
                     
                     this.loadHomeFeed();
                     this.showNotification('Profile photo updated successfully!', 'success');
@@ -6001,22 +5988,11 @@
                 if (!file) return;
                 try {
                     this.showNotification('Uploading dashboard picture...', 'info');
-                    const ext = file.name.split('.').pop();
-                    const fileName = `dashboard_${this.currentUser.id}_${Date.now()}.${ext}`;
-                    const { error: uploadError } = await window.supabaseClient.storage
-                        .from('dashboard-images')
-                        .upload(fileName, file, { upsert: true });
-                    if (uploadError) throw uploadError;
-                    const { data: urlData } = window.supabaseClient.storage
-                        .from('dashboard-images')
-                        .getPublicUrl(fileName);
-                    const imageUrl = urlData.publicUrl;
+                    const imageUrl = await window.smartUpload(file, 'dashboard-images', 'dashboard');
                     if (window.isNhostEnabled) {
                         const { error } = await this._nhostRequest(`
                             mutation UpdateDashboardImage($id: uuid!, $url: String!) {
-                                update_profiles_by_pk(pk_columns: {id: $id}, _set: {dashboard_image_url: $url}) {
-                                    id dashboard_image_url
-                                }
+                                update_profiles_by_pk(pk_columns: {id: $id}, _set: {dashboard_image_url: $url}) { id dashboard_image_url }
                             }
                         `, { id: this.currentUser.id, url: imageUrl });
                         if (error) console.warn('DB update failed:', error);
@@ -12736,8 +12712,11 @@
                     if (content) { content.style.position = 'relative'; content.appendChild(overlay); }
                 }
                 try {
-                    const folder = file.type.startsWith('image/') ? 'images' : file.type.startsWith('video/') ? 'videos' : file.type.startsWith('audio/') ? 'audio' : 'files';
-                    const url = await window.uploadToImageKit(file, folder);
+                    const isImg = file.type.startsWith('image/');
+                    const folder = isImg ? 'images' : file.type.startsWith('video/') ? 'videos' : file.type.startsWith('audio/') ? 'audio' : 'files';
+                    const url = isImg
+                        ? await window.smartUpload(file, 'chat-images', folder)
+                        : await window.uploadToImageKit(file, folder);
                     const me = window.authManager.currentUser.id;
                     const fileType = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'document';
                     const { data: sent, error } = await window.supabaseClient.from('messages').insert({
