@@ -3258,7 +3258,8 @@
         const IK_PRIV_KEY = 'private_zfdTGtZDbUPUhhf60japgNapHwc=';
 
         window.uploadToImageKit = async function(file, folder = 'uploads') {
-            const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload';
+            const ext = (file.name && file.name.includes('.')) ? file.name.split('.').pop() : (file.type ? file.type.split('/')[1] : 'bin');
+            const safeName = (file.name || 'upload').replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload';
             const fileName = `${folder}_${Date.now()}_${safeName}`;
             const fd = new FormData();
             fd.append('file', file);
@@ -3278,8 +3279,9 @@
 
         // Smart upload: jpg/jpeg → Supabase storage, all other formats → ImageKit
         window.smartUpload = async function(file, supabaseBucket, ikFolder) {
-            const ext = file.name.split('.').pop().toLowerCase();
-            const isJpg = ext === 'jpg' || ext === 'jpeg' || file.type === 'image/jpeg';
+            const ext = (file.name.split('.').pop() || '').toLowerCase();
+            const mime = file.type || '';
+            const isJpg = ext === 'jpg' || ext === 'jpeg' || mime === 'image/jpeg';
             if (isJpg && window.supabaseClient) {
                 const fileName = `${ikFolder}_${Date.now()}.jpg`;
                 const { error } = await window.supabaseClient.storage.from(supabaseBucket).upload(fileName, file, { upsert: true });
@@ -5950,7 +5952,11 @@
 
             async uploadProfilePhoto(file) {
                 try {
-                    if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) throw new Error('Please select an image file');
+                    const mime = file.type || '';
+                    const ext = (file.name.split('.').pop() || '').toLowerCase();
+                    const imgExts = ['jpg','jpeg','png','gif','webp','heic','heif','bmp','tiff','avif'];
+                    const isImage = mime.startsWith('image/') || imgExts.includes(ext);
+                    if (!isImage) throw new Error('Please select an image file');
                     if (file.size > 20 * 1024 * 1024) throw new Error('File size must be less than 20MB');
                     this.showNotification('Uploading profile photo...', 'success');
                     const photoUrl = await window.smartUpload(file, 'avatars', 'avatars');
