@@ -199,16 +199,4 @@ class ProfessionalSettingsManager {
 // Initialize global instance
 if (typeof window !== 'undefined') {
     window.professionalSettings = new ProfessionalSettingsManager();
-    
-    // Debug: Ensure the manager is available
-    console.log('Professional Settings Manager initialized:', window.professionalSettings);
-    
-    // Ensure it's available after DOM is loaded
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', function() {
-            console.log('DOM loaded, Professional Settings Manager available:', window.professionalSettings);
-        });
-    }
-} else {
-    console.error('Window object not available for Professional Settings Manager');
 }
