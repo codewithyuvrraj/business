@@ -6552,8 +6552,10 @@
                 if (window.lockManager) {
                     const allowed = await window.lockManager.checkAndGate('channels', () => this._openChannelsPage());
                     if (!allowed) return;
+                    this._openChannelsPage();
+                } else {
+                    this._openChannelsPage();
                 }
-                this._openChannelsPage();
             }
 
             async _openChannelsPage(tab = 'my') {
@@ -11953,6 +11955,22 @@
                 }
             }
             
+            async deleteChannel(channelId) {
+                if (!confirm('Delete this channel? This cannot be undone.')) return;
+                try {
+                    const supabase = window.supabaseClient;
+                    await supabase.from('channel_members').delete().eq('channel_id', channelId);
+                    await supabase.from('messages').delete().eq('channel_id', channelId);
+                    const { error } = await supabase.from('channels').delete().eq('id', channelId).eq('creator_id', this.currentUser.id);
+                    if (error) throw error;
+                    document.querySelectorAll('.overlay').forEach(m => m.remove());
+                    this.showNotification('Channel deleted', 'success');
+                    this._openChannelsPage('my');
+                } catch(e) {
+                    this.showNotification('Failed to delete channel', 'error');
+                }
+            }
+
             async showChannelSettings(channelId) {
                 let channel = null;
                 if (window.isNhostEnabled) {
@@ -13086,19 +13104,6 @@
             `;
             }
         });
-
-        // Initialize the app
-        // Initialize the app
-        window.authManager = new AuthManager();
-        
-        // Initialize when DOM is ready
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => {
-                window.authManager.initializeAuth();
-            });
-        } else {
-            window.authManager.initializeAuth();
-        }
     function togglePwd(id, btn) {
         const inp = document.getElementById(id);
         const isText = inp.type === 'text';
