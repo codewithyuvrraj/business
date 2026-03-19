@@ -5957,7 +5957,7 @@
                     if (window.isNhostEnabled) {
                         const { error: updateError } = await this._nhostRequest(`
                             mutation UpdateUserAvatar($id: uuid!, $url: String) {
-                                update_profiles_by_pk(pk_columns: {id: $id}, _set: {profile_picture_url: $url}) { id }
+                                update_profiles_by_pk(pk_columns: {id: $id}, _set: {profile_picture_url: $url, avatar_url: $url}) { id }
                             }
                         `, { id: this.currentUser.id, url: photoUrl });
                         if (updateError) throw new Error('DB update failed: ' + JSON.stringify(updateError));
@@ -12675,7 +12675,12 @@
                 if (!this.currentConversation) return;
                 const conv = this.currentConversation;
                 // Show preview immediately while uploading
-                const isImage = file.type.startsWith('image/');
+                const mime = file.type || '';
+                const ext = file.name.split('.').pop().toLowerCase();
+                const imgExts = ['jpg','jpeg','png','gif','webp','heic','heif','bmp','tiff','avif'];
+                const vidExts = ['mp4','mov','avi','mkv','webm','3gp'];
+                const isImage = mime.startsWith('image/') || imgExts.includes(ext);
+                const isVideo = mime.startsWith('video/') || vidExts.includes(ext);
                 const tempId = 'temp_' + Date.now();
                 const tempMsg = {
                     id: tempId,
@@ -12683,8 +12688,8 @@
                     receiver_id: conv.type === 'direct' ? conv.user.id : null,
                     group_id: conv.type === 'group' ? conv.groupId : null,
                     channel_id: conv.type === 'channel' ? conv.channelId : null,
-                    file_type: isImage ? 'image' : file.type.startsWith('audio/') ? 'audio' : 'document',
-                    file_url: isImage ? URL.createObjectURL(file) : null,
+                    file_type: isImage ? 'image' : isVideo ? 'video' : mime.startsWith('audio/') ? 'audio' : 'document',
+                    file_url: (isImage || isVideo) ? URL.createObjectURL(file) : null,
                     file_name: file.name,
                     file_size: file.size,
                     content: null,
@@ -12704,13 +12709,19 @@
                     if (content) { content.style.position = 'relative'; content.appendChild(overlay); }
                 }
                 try {
-                    const isImg = file.type.startsWith('image/');
-                    const folder = isImg ? 'images' : file.type.startsWith('video/') ? 'videos' : file.type.startsWith('audio/') ? 'audio' : 'files';
-                    const url = isImg
-                        ? await window.smartUpload(file, 'chat-images', folder)
-                        : await window.uploadToImageKit(file, folder);
+                    // Detect file type robustly — handle empty MIME (HEIC etc)
+                    const mime = file.type || '';
+                    const ext = file.name.split('.').pop().toLowerCase();
+                    const imgExts = ['jpg','jpeg','png','gif','webp','heic','heif','bmp','tiff','avif'];
+                    const vidExts = ['mp4','mov','avi','mkv','webm','3gp'];
+                    const isImg = mime.startsWith('image/') || imgExts.includes(ext);
+                    const isVid = mime.startsWith('video/') || vidExts.includes(ext);
+                    const isAud = mime.startsWith('audio/');
+                    const fileType = isImg ? 'image' : isVid ? 'video' : isAud ? 'audio' : 'document';
+                    const folder = isImg ? 'images' : isVid ? 'videos' : isAud ? 'audio' : 'files';
+                    // Always use ImageKit for chat files (no bucket dependency)
+                    const url = await window.uploadToImageKit(file, folder);
                     const me = window.authManager.currentUser.id;
-                    const fileType = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'document';
                     const { data: sent, error } = await window.supabaseClient.from('messages').insert({
                         sender_id: me,
                         receiver_id: conv.type === 'direct'  ? conv.user.id  : null,
@@ -12778,7 +12789,10 @@
                 let body;
                 if (msg.file_url) {
                     if (msg.file_type === 'image') {
-                        body = `<img src="${msg.file_url}" style="max-width:200px;border-radius:8px;display:block;cursor:zoom-in;" onclick="window.openImageViewer('${msg.file_url}')">`;                    } else if (msg.file_type === 'audio') {
+                        body = `<img src="${msg.file_url}" style="max-width:200px;border-radius:8px;display:block;cursor:zoom-in;" onerror="this.style.display='none'" onclick="window.openImageViewer('${msg.file_url}')">`;
+                    } else if (msg.file_type === 'video') {
+                        body = `<video src="${msg.file_url}" style="max-width:200px;border-radius:8px;display:block;" controls playsinline></video>`;
+                    } else if (msg.file_type === 'audio') {
                         const wid = 'wf_' + (msg.id || Date.now());
                         body = `<div class="audio-waveform-player" id="${wid}" data-src="${msg.file_url}">
                             <button class="wf-play-btn" onclick="window.wfToggle('${wid}')">
