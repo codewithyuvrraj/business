@@ -12736,16 +12736,29 @@
                     if (content) { content.style.position = 'relative'; content.appendChild(overlay); }
                 }
                 try {
-                    const sent = await window.messagingManager.sendFileMessage({
-                        receiverId: conv.type === 'direct'  ? conv.user.id  : null,
-                        groupId:    conv.type === 'group'   ? conv.groupId  : null,
-                        channelId:  conv.type === 'channel' ? conv.channelId: null,
-                        file
-                    });
+                    const folder = file.type.startsWith('image/') ? 'images' : file.type.startsWith('video/') ? 'videos' : file.type.startsWith('audio/') ? 'audio' : 'files';
+                    const url = await window.uploadToImageKit(file, folder);
+                    const me = window.authManager.currentUser.id;
+                    const fileType = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : file.type.startsWith('audio/') ? 'audio' : 'document';
+                    const { data: sent, error } = await window.supabaseClient.from('messages').insert({
+                        sender_id: me,
+                        receiver_id: conv.type === 'direct'  ? conv.user.id  : null,
+                        group_id:    conv.type === 'group'   ? conv.groupId  : null,
+                        channel_id:  conv.type === 'channel' ? conv.channelId: null,
+                        file_url: url,
+                        file_type: fileType,
+                        file_name: file.name,
+                        file_size: file.size,
+                        content: null,
+                        is_read: false,
+                        type: conv.type === 'direct' ? 'direct' : conv.type
+                    }).select().single();
+                    if (error) throw error;
                     // Replace temp message with real one
                     if (tempDiv) tempDiv.remove();
                     if (sent) this._appendMessage(sent);
                 } catch (e) {
+                    console.error('File send error:', e);
                     if (tempDiv) tempDiv.remove();
                     window.authManager.showNotification('Failed to send file', 'error');
                 }
