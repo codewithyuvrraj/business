@@ -2868,7 +2868,7 @@
                 </div>
 
                 <!-- Regular Login Form -->
-                <form id="loginForm">
+                <form id="loginForm" autocomplete="off">
                     <div class="form-group">
                         <label for="loginEmail">Email or Username</label>
                         <input type="text" id="loginEmail" autocomplete="username" placeholder="Enter email or username" required>
@@ -2876,7 +2876,7 @@
                     <div class="form-group">
                         <label for="loginPassword">Password</label>
                         <div style="position:relative;">
-                            <input type="password" id="loginPassword" name="password" autocomplete="current-password" required style="padding-right:40px;width:100%;box-sizing:border-box;">
+                            <input type="password" id="loginPassword" name="password" autocomplete="new-password" required style="padding-right:40px;width:100%;box-sizing:border-box;">
                             <button type="button" onclick="togglePwd('loginPassword',this)" style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;padding:0;color:#9ca3af;"><svg id="loginPassword-eye" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
                         </div>
                     </div>
@@ -3490,6 +3490,56 @@
             } catch(e) {
                 window.authManager?.showNotification('Download failed', 'error');
             }
+        };
+
+        // ===== INLINE DOCUMENT VIEWER =====
+        window._openDocViewer = function(url, name) {
+            const ext = (url.split('?')[0].split('.').pop() || '').toLowerCase();
+            const isImg = ['jpg','jpeg','png','gif','webp','heic','heif','bmp','avif','tiff'].includes(ext);
+            const isVid = ['mp4','mov','webm','avi','mkv','3gp'].includes(ext);
+            const isPdf = ext === 'pdf';
+            const isOffice = ['doc','docx','xls','xlsx','ppt','pptx'].includes(ext);
+
+            const viewer = document.createElement('div');
+            viewer.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);z-index:99999;display:flex;flex-direction:column;';
+
+            // Header bar
+            const header = `<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:rgba(255,255,255,0.08);flex-shrink:0;">
+                <span style="color:white;font-size:14px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%;">${name}</span>
+                <div style="display:flex;gap:8px;">
+                    <a href="${url}" download="${name}" style="width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.15);display:flex;align-items:center;justify-content:center;text-decoration:none;">
+                        <svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:none;stroke:white;stroke-width:2;stroke-linecap:round;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    </a>
+                    <button onclick="this.closest('[style*=fixed]').remove()" style="width:36px;height:36px;border-radius:50%;background:rgba(255,255,255,0.15);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;">
+                        <svg viewBox="0 0 24 24" style="width:16px;height:16px;fill:none;stroke:white;stroke-width:2.5;stroke-linecap:round;"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                </div>
+            </div>`;
+
+            let content;
+            if (isImg) {
+                const disp = window.ikDisplayUrl ? window.ikDisplayUrl(url) : url;
+                content = `<div style="flex:1;display:flex;align-items:center;justify-content:center;overflow:auto;padding:16px;">
+                    <img src="${disp}" style="max-width:100%;max-height:100%;object-fit:contain;border-radius:4px;" onerror="this.src='${url}';this.onerror=null;">
+                </div>`;
+            } else if (isVid) {
+                content = `<div style="flex:1;display:flex;align-items:center;justify-content:center;padding:16px;">
+                    <video src="${url}" controls playsinline style="max-width:100%;max-height:100%;border-radius:8px;"></video>
+                </div>`;
+            } else if (isPdf) {
+                content = `<iframe src="${url}" style="flex:1;width:100%;border:none;" allowfullscreen></iframe>`;
+            } else if (isOffice) {
+                const encoded = encodeURIComponent(url);
+                content = `<iframe src="https://docs.google.com/gview?url=${encoded}&embedded=true" style="flex:1;width:100%;border:none;" allowfullscreen></iframe>`;
+            } else {
+                // Plain text or unknown — try iframe, fallback to download link
+                content = `<iframe src="${url}" style="flex:1;width:100%;border:none;background:white;"></iframe>`;
+            }
+
+            viewer.innerHTML = header + `<div style="flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;">${content}</div>`;
+            viewer.addEventListener('click', e => { if (e.target === viewer) viewer.remove(); });
+            document.addEventListener('keydown', function esc(e) { if (e.key === 'Escape') { viewer.remove(); document.removeEventListener('keydown', esc); } });
+            document.body.appendChild(viewer);
         };
     </script>
 
@@ -12770,7 +12820,7 @@
                         </div>`;
                         setTimeout(() => window.wfInit(wid), 50);
                     } else {
-                        body = `<div class="file-attachment" onclick="window.open('${msg.file_url}')"><div class="file-icon"><i class="fas fa-file"></i></div><div class="file-info"><h4>${msg.file_name || 'File'}</h4><p>${msg.file_size ? Math.round(msg.file_size/1024)+'KB' : ''}</p></div></div>`;
+                        body = `<div class="file-attachment" onclick="window._openDocViewer('${msg.file_url}','${(msg.file_name||'File').replace(/'/g,'')}')" style="cursor:pointer;"><div class="file-icon"><i class="fas fa-file"></i></div><div class="file-info"><h4>${msg.file_name || 'File'}</h4><p>${msg.file_size ? Math.round(msg.file_size/1024)+'KB' : ''}</p></div></div>`;
                     }
                 } else {
                     body = `<p class="message-text">${this._escape(msg.content || msg.text || '')}</p>`;
