@@ -3232,8 +3232,8 @@
 
     <!-- File Upload Input -->
     <input type="file" id="hiddenFileInput" style="display:none;" accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip,.rar,.csv">
-    <input type="file" id="hiddenImageInput" style="display:none;" accept="image/*,video/*">
-    <input type="file" id="profilePhotoInput" style="display: none;" accept="image/*">
+    <input type="file" id="hiddenImageInput" style="display:none;" accept="image/*,video/*,.heic,.heif,.avif">
+    <input type="file" id="profilePhotoInput" style="display: none;" accept="image/*,.heic,.heif,.avif">
     
     <!-- Core App Scripts -->
     <script src="comprehensive-signup-fix.js?v=2"></script>
@@ -3279,6 +3279,13 @@
         };
 
         window.uploadFile = window.uploadToImageKit;
+
+        // Convert ImageKit URL to browser-displayable format (HEIC→JPEG via IK transform)
+        window.ikDisplayUrl = function(url) {
+            if (!url || !url.includes('ik.imagekit.io')) return url;
+            // Append tr=f-jpg,q-85 to force JPEG output for any format
+            return url + (url.includes('?') ? '&tr=f-jpg,q-85' : '?tr=f-jpg,q-85');
+        };
 
         // ===== AUDIO RECORDER =====
         window._audioRecorder = null;
@@ -3447,6 +3454,7 @@
 
         // ===== IMAGE VIEWER (WhatsApp/Instagram style) =====
         window.openImageViewer = function(src) {
+            const dispSrc = window.ikDisplayUrl ? window.ikDisplayUrl(src) : src;
             const viewer = document.createElement('div');
             viewer.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.95);z-index:99999;display:flex;align-items:center;justify-content:center;animation:fadeIn 0.2s ease;';
             viewer.innerHTML = `
@@ -3456,7 +3464,7 @@
                 <button onclick="window._downloadImage('${src}')" style="position:absolute;top:16px;right:68px;background:rgba(255,255,255,0.15);border:none;color:white;width:40px;height:40px;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);">
                     <svg viewBox="0 0 24 24" style="width:18px;height:18px;fill:none;stroke:white;stroke-width:2;stroke-linecap:round;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                 </button>
-                <img src="${src}" style="max-width:92vw;max-height:88vh;object-fit:contain;border-radius:4px;box-shadow:0 8px 40px rgba(0,0,0,0.6);user-select:none;" draggable="false">
+                <img src="${dispSrc}" style="max-width:92vw;max-height:88vh;object-fit:contain;border-radius:4px;box-shadow:0 8px 40px rgba(0,0,0,0.6);user-select:none;" draggable="false" onerror="this.src='${src}';this.onerror=null;">
             `;
             // Close on backdrop click
             viewer.addEventListener('click', (e) => { if (e.target === viewer) viewer.remove(); });
@@ -5947,14 +5955,25 @@
                     if (!isImage) throw new Error('Please select an image file');
                     if (file.size > 20 * 1024 * 1024) throw new Error('File size must be less than 20MB');
                     this.showNotification('Uploading profile photo...', 'success');
-                    const photoUrl = await window.smartUpload(file, 'avatars', 'avatars');
+                    const photoUrl = await window.uploadToImageKit(file, 'avatars');
+                    // Update DB — try Nhost first, fall back to Supabase profiles table
+                    let dbOk = false;
                     if (window.isNhostEnabled) {
-                        const { error: updateError } = await this._nhostRequest(`
-                            mutation UpdateUserAvatar($id: uuid!, $url: String) {
-                                update_profiles_by_pk(pk_columns: {id: $id}, _set: {profile_picture_url: $url, avatar_url: $url}) { id }
-                            }
-                        `, { id: this.currentUser.id, url: photoUrl });
-                        if (updateError) throw new Error('DB update failed: ' + JSON.stringify(updateError));
+                        try {
+                            const { error: updateError } = await this._nhostRequest(`
+                                mutation UpdateUserAvatar($id: uuid!, $url: String) {
+                                    update_profiles_by_pk(pk_columns: {id: $id}, _set: {profile_picture_url: $url, avatar_url: $url}) { id }
+                                }
+                            `, { id: this.currentUser.id, url: photoUrl });
+                            if (!updateError) dbOk = true;
+                            else console.warn('Nhost avatar update failed:', updateError);
+                        } catch(e) { console.warn('Nhost avatar update error:', e); }
+                    }
+                    if (!dbOk && window.supabaseClient) {
+                        try {
+                            await window.supabaseClient.from('profiles').update({ profile_picture_url: photoUrl, avatar_url: photoUrl }).eq('id', this.currentUser.id);
+                            dbOk = true;
+                        } catch(e) { console.warn('Supabase avatar update error:', e); }
                     }
                     this.currentUser.profile_picture_url = photoUrl;
                     this.currentUser.avatar_url = photoUrl;
@@ -6139,7 +6158,7 @@
                                                 : ''
                                             }
                                         </div>
-                                        <input type="file" id="dashboardImgInput" accept="image/*" style="display:none;" onchange="window.authManager.uploadDashboardImage(this.files[0])">
+                                        <input type="file" id="dashboardImgInput" accept="image/*,.heic,.heif,.avif" style="display:none;" onchange="window.authManager.uploadDashboardImage(this.files[0])">
                                     </div>
                                     <div class="setting-item" style="flex-direction: column; align-items: flex-start;">
                                         <label>Full Name</label>
@@ -12735,7 +12754,8 @@
                 let body;
                 if (msg.file_url) {
                     if (msg.file_type === 'image') {
-                        body = `<img src="${msg.file_url}" style="max-width:200px;border-radius:8px;display:block;cursor:zoom-in;" onerror="this.style.display='none'" onclick="window.openImageViewer('${msg.file_url}')">`;
+                        const _dispUrl = window.ikDisplayUrl(msg.file_url);
+                        body = `<img src="${_dispUrl}" style="max-width:200px;border-radius:8px;display:block;cursor:zoom-in;" onerror="this.src='${msg.file_url}';this.onerror=null;" onclick="window.openImageViewer('${msg.file_url}')">`;
                     } else if (msg.file_type === 'video') {
                         body = `<video src="${msg.file_url}" style="max-width:200px;border-radius:8px;display:block;" controls playsinline></video>`;
                     } else if (msg.file_type === 'audio') {
