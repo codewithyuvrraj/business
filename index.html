@@ -3252,20 +3252,17 @@
     <script src="quick-fix.js?v=2"></script>
 
     <script>
-        // ===== IMAGEKIT UPLOAD HELPER =====
-        const IK_URL      = 'https://ik.imagekit.io/dvtrefk4x';
-        const IK_PUB_KEY  = 'public_LQCbiCUXj9ck9N3Ov4yl3zR/oSk=';
+        // ===== UPLOAD HELPER =====
         const IK_PRIV_KEY = 'private_zfdTGtZDbUPUhhf60japgNapHwc=';
 
-        window.uploadToImageKit = async function(file, folder = 'uploads') {
-            const ext = (file.name && file.name.includes('.')) ? file.name.split('.').pop() : (file.type ? file.type.split('/')[1] : 'bin');
+        window.uploadToImageKit = async function(file, folder) {
+            folder = folder || 'uploads';
             const safeName = (file.name || 'upload').replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload';
-            const fileName = `${folder}_${Date.now()}_${safeName}`;
+            const fileName = folder + '_' + Date.now() + '_' + safeName;
             const fd = new FormData();
             fd.append('file', file);
             fd.append('fileName', fileName);
             fd.append('folder', '/' + folder);
-            fd.append('publicKey', IK_PUB_KEY);
             const authStr = btoa(IK_PRIV_KEY + ':');
             const res = await fetch('https://upload.imagekit.io/api/v1/files/upload', {
                 method: 'POST',
@@ -3273,24 +3270,15 @@
                 body: fd
             });
             const result = await res.json();
-            if (!res.ok || result.message) throw new Error(result.message || 'ImageKit upload failed');
+            if (!res.ok || result.message) throw new Error(result.message || 'Upload failed');
             return result.url;
         };
 
-        // Smart upload: jpg/jpeg → Supabase storage, all other formats → ImageKit
-        window.smartUpload = async function(file, supabaseBucket, ikFolder) {
-            const ext = (file.name.split('.').pop() || '').toLowerCase();
-            const mime = file.type || '';
-            const isJpg = ext === 'jpg' || ext === 'jpeg' || mime === 'image/jpeg';
-            if (isJpg && window.supabaseClient) {
-                const fileName = `${ikFolder}_${Date.now()}.jpg`;
-                const { error } = await window.supabaseClient.storage.from(supabaseBucket).upload(fileName, file, { upsert: true });
-                if (error) throw new Error('Upload failed: ' + error.message);
-                const { data } = window.supabaseClient.storage.from(supabaseBucket).getPublicUrl(fileName);
-                return data.publicUrl;
-            }
-            return await window.uploadToImageKit(file, ikFolder);
+        window.smartUpload = async function(file, bucket, folder) {
+            return await window.uploadToImageKit(file, folder);
         };
+
+        window.uploadFile = window.uploadToImageKit;
 
         // ===== AUDIO RECORDER =====
         window._audioRecorder = null;
