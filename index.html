@@ -12280,40 +12280,16 @@
             
             async uploadGroupPhoto(groupId, file) {
                 if (!file) return;
-                
                 try {
-                    // Validate file type and size
-                    if (!file.type.startsWith('image/')) {
-                        throw new Error('Please select an image file');
-                    }
-                    if (file.size > 5 * 1024 * 1024) {
-                        throw new Error('Image size must be less than 5MB');
-                    }
-                    
+                    const mime = file.type || '';
+                    const ext = (file.name.split('.').pop() || '').toLowerCase();
+                    const imgExts = ['jpg','jpeg','png','gif','webp','heic','heif','bmp','tiff','avif'];
+                    if (!mime.startsWith('image/') && !imgExts.includes(ext)) throw new Error('Please select an image file');
+                    if (file.size > 20 * 1024 * 1024) throw new Error('Image size must be less than 20MB');
                     this.showNotification('Uploading group photo...', 'success');
-                    
-                    let photoUrl;
-                    if (window.isSupabaseEnabled) {
-                        const fileName = `group_${groupId}_${Date.now()}.${file.name.split('.').pop()}`;
-                        const { error: uploadError } = await window.supabaseClient.storage
-                            .from('dashboard-images')
-                            .upload(fileName, file, { upsert: true });
-                        
-                        if (uploadError) throw new Error('Failed to upload: ' + uploadError.message);
-                        
-                        const { data: urlData } = window.supabaseClient.storage
-                            .from('dashboard-images')
-                            .getPublicUrl(fileName);
-                        photoUrl = urlData.publicUrl;
-                        
-                        const { error: updateError } = await window.supabaseClient
-                            .from('groups')
-                            .update({ photo_url: photoUrl })
-                            .eq('id', groupId);
-                        
-                        if (updateError) throw new Error('Failed to update group: ' + updateError.message);
-                    }
-                    
+                    const photoUrl = await window.smartUpload(file, 'dashboard-images', 'groups');
+                    const { error: updateError } = await window.supabaseClient.from('groups').update({ photo_url: photoUrl }).eq('id', groupId);
+                    if (updateError) throw new Error('Failed to update group: ' + updateError.message);
                     this.showNotification('Group photo updated successfully!', 'success');
                     document.querySelector('.overlay').remove();
                     this.showGroupSettings(groupId);
@@ -12325,40 +12301,16 @@
             
             async uploadChannelPhoto(channelId, file) {
                 if (!file) return;
-                
                 try {
-                    // Validate file type and size
-                    if (!file.type.startsWith('image/')) {
-                        throw new Error('Please select an image file');
-                    }
-                    if (file.size > 5 * 1024 * 1024) {
-                        throw new Error('Image size must be less than 5MB');
-                    }
-                    
+                    const mime = file.type || '';
+                    const ext = (file.name.split('.').pop() || '').toLowerCase();
+                    const imgExts = ['jpg','jpeg','png','gif','webp','heic','heif','bmp','tiff','avif'];
+                    if (!mime.startsWith('image/') && !imgExts.includes(ext)) throw new Error('Please select an image file');
+                    if (file.size > 20 * 1024 * 1024) throw new Error('Image size must be less than 20MB');
                     this.showNotification('Uploading channel photo...', 'success');
-                    
-                    let photoUrl;
-                    if (window.isSupabaseEnabled) {
-                        const fileName = `channel_${channelId}_${Date.now()}.${file.name.split('.').pop()}`;
-                        const { error: uploadError } = await window.supabaseClient.storage
-                            .from('dashboard-images')
-                            .upload(fileName, file, { upsert: true });
-                        
-                        if (uploadError) throw new Error('Failed to upload to storage: ' + uploadError.message);
-                        
-                        const { data: urlData } = window.supabaseClient.storage
-                            .from('dashboard-images')
-                            .getPublicUrl(fileName);
-                        photoUrl = urlData.publicUrl;
-                        
-                        const { error: updateError } = await window.supabaseClient
-                            .from('channels')
-                            .update({ photo_url: photoUrl })
-                            .eq('id', channelId);
-                        
-                        if (updateError) throw new Error('Failed to update channel: ' + updateError.message);
-                    }
-                    
+                    const photoUrl = await window.smartUpload(file, 'dashboard-images', 'channels');
+                    const { error: updateError } = await window.supabaseClient.from('channels').update({ photo_url: photoUrl }).eq('id', channelId);
+                    if (updateError) throw new Error('Failed to update channel: ' + updateError.message);
                     this.showNotification('Channel photo updated successfully!', 'success');
                     document.querySelector('.overlay').remove();
                     this.showChannelSettings(channelId);
