@@ -1427,21 +1427,22 @@
         .auth-container {
             display: flex;
             justify-content: center;
-            align-items: center;
+            align-items: flex-start;
             flex: 1 1 0;
             min-height: 0;
             padding: 20px;
             overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
         }
 
         .auth-card {
             background: white;
             border-radius: 20px;
             box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
             width: 100%;
             max-width: 450px;
             animation: fadeInUp 0.6s ease-out;
+            margin: auto 0;
         }
 
         @keyframes fadeInUp {
@@ -3255,8 +3256,42 @@
         // ===== UPLOAD HELPER =====
         const IK_PRIV_KEY = 'private_zfdTGtZDbUPUhhf60japgNapHwc=';
 
+        window.compressImage = async function(file, maxSizePx, quality) {
+            maxSizePx = maxSizePx || 1200;
+            quality = quality || 0.82;
+            const ext = (file.name.split('.').pop() || '').toLowerCase();
+            const skipExts = ['gif', 'svg', 'webp'];
+            if (skipExts.includes(ext) || !file.type.startsWith('image/')) return file;
+            return new Promise((resolve) => {
+                const img = new Image();
+                const url = URL.createObjectURL(file);
+                img.onload = () => {
+                    URL.revokeObjectURL(url);
+                    let w = img.width, h = img.height;
+                    if (w <= maxSizePx && h <= maxSizePx && file.size < 300 * 1024) { resolve(file); return; }
+                    const scale = Math.min(maxSizePx / w, maxSizePx / h, 1);
+                    w = Math.round(w * scale); h = Math.round(h * scale);
+                    const canvas = document.createElement('canvas');
+                    canvas.width = w; canvas.height = h;
+                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                    canvas.toBlob((blob) => {
+                        if (!blob || blob.size >= file.size) { resolve(file); return; }
+                        resolve(new File([blob], file.name.replace(/\.[^.]+$/, '.jpg'), { type: 'image/jpeg' }));
+                    }, 'image/jpeg', quality);
+                };
+                img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+                img.src = url;
+            });
+        };
+
         window.uploadToImageKit = async function(file, folder) {
             folder = folder || 'uploads';
+            // Compress images before upload for speed
+            const isAvatar = folder === 'avatars';
+            const isDash = folder === 'dashboard';
+            if (isAvatar || isDash) {
+                file = await window.compressImage(file, isAvatar ? 800 : 1200, 0.82);
+            }
             const safeName = (file.name || 'upload').replace(/[^a-zA-Z0-9._-]/g, '_') || 'upload';
             const fileName = folder + '_' + Date.now() + '_' + safeName;
             const fd = new FormData();
@@ -4164,13 +4199,19 @@
                 if (e && typeof e.preventDefault === 'function') {
                     e.preventDefault();
                 }
-                
+
+                // Show login-form container, hide register-form
+                const loginFormContainer = document.getElementById('login-form');
+                const registerFormContainer = document.getElementById('register-form');
+                if (loginFormContainer) loginFormContainer.style.display = 'block';
+                if (registerFormContainer) registerFormContainer.style.display = 'none';
+
                 const savedAccountsContainer = document.getElementById('savedAccountsContainer');
                 const loginForm = document.getElementById('loginForm');
                 const emailInput = document.getElementById('loginEmail');
                 const passwordInput = document.getElementById('loginPassword');
                 const rememberCheckbox = document.getElementById('rememberMe');
-                
+
                 // Clear form
                 if (emailInput) emailInput.value = '';
                 if (passwordInput) passwordInput.value = '';
@@ -4179,11 +4220,11 @@
                     emailInput.style.background = '';
                     emailInput.style.borderColor = '';
                 }
-                
+
                 // Show login form, hide saved accounts
                 if (savedAccountsContainer) savedAccountsContainer.style.display = 'none';
                 if (loginForm) loginForm.style.display = 'block';
-                
+
                 // Focus on email field
                 if (emailInput) {
                     setTimeout(() => emailInput.focus(), 100);
@@ -4606,6 +4647,8 @@
             }
 
             async handleRegister(e) {
+                // If comprehensive-signup-fix is loaded, it handles registration
+                if (window.safeHandleRegister) { e.preventDefault(); return; }
                 e.preventDefault();
                 // Delegate entirely to comprehensive-signup-fix.js safe handler
                 // to avoid duplicate execution and session conflicts
@@ -4793,8 +4836,13 @@
                                 return; // Exit function
                             } else if (authError.error === 'internal-server-error' || authError.status === 500) {
                                 throw new Error('Server temporarily unavailable. Please try again in a few minutes.');
-                            } else if (authError.message && authError.message.includes('email')) {
-                                throw new Error('This email is already registered. Please use a different email or try signing in.');
+                            } else if (
+                                authError.error === 'email-already-in-use' ||
+                                authError.error === 'user-already-exists' ||
+                                authError.error === 'email-already-exists' ||
+                                authError.status === 409
+                            ) {
+                                throw new Error('This email is already registered. Please sign in or use a different email.');
                             } else {
                                 throw new Error(authError.message || 'Registration failed. Please try again.');
                             }
@@ -4814,9 +4862,6 @@
                             session = { user: nhostUser };
                         }
                         
-                        
-                        // Wait for auth to complete
-                        await new Promise(resolve => setTimeout(resolve, 1000));
                         
                         // Create user profile in users table
                         const { data: userData, error: userError } = await window.nhost.graphql.request(`
@@ -4913,41 +4958,46 @@
                         }
                         
                         this.showNotification('Account created successfully!', 'success');
-                        
-                        // Store user data locally as backup
+
+                        // Store user data locally
                         localStorage.setItem('businessconnect_current_user', JSON.stringify(this.currentUser));
-                        
-                        // Upload profile pic if selected
-                        const profilePicFile = document.getElementById('registerProfilePic')?.files?.[0];
-                        if (profilePicFile) {
-                            try {
-                                const photoUrl = await window.smartUpload(profilePicFile, 'avatars', 'avatars');
-                                await window.nhost.graphql.request(`mutation U($id:uuid!,$url:String){update_profiles_by_pk(pk_columns:{id:$id},_set:{profile_picture_url:$url}){id}}`, { id: this.currentUser.id, url: photoUrl });
-                                this.currentUser.avatar_url = photoUrl;
-                                this.currentUser.profile_picture_url = photoUrl;
-                            } catch(e) { console.warn('Profile pic upload failed:', e); }
-                        }
 
-                        // Upload dashboard image if selected
-                        const dashFile = document.getElementById('registerDashPic')?.files?.[0];
-                        if (dashFile) {
-                            try {
-                                const imageUrl = await window.smartUpload(dashFile, 'dashboard-images', 'dashboard');
-                                await window.nhost.graphql.request(`mutation U($id:uuid!,$url:String!){update_profiles_by_pk(pk_columns:{id:$id},_set:{dashboard_image_url:$url}){id}}`, { id: this.currentUser.id, url: imageUrl });
-                                this.currentUser.dashboard_image_url = imageUrl;
-                            } catch(e) { console.warn('Dashboard image upload failed:', e); }
-                        }
-
-                        // Save bio if entered
-                        const bio = document.getElementById('registerBio')?.value?.trim();
-                        if (bio) {
-                            try {
-                                await window.nhost.graphql.request(`mutation U($id:uuid!,$bio:String){update_profiles_by_pk(pk_columns:{id:$id},_set:{bio:$bio}){id}}`, { id: this.currentUser.id, bio });
-                                this.currentUser.bio = bio;
-                            } catch(e) { console.warn('Bio save failed:', e); }
-                        }
-
-                        localStorage.setItem('businessconnect_current_user', JSON.stringify(this.currentUser));
+                        // Upload profile pic, dashboard, bio in background (non-blocking)
+                        const _uid = this.currentUser.id;
+                        const _profilePicFile = document.getElementById('registerProfilePic')?.files?.[0];
+                        const _dashFile = document.getElementById('registerDashPic')?.files?.[0];
+                        const _bio = document.getElementById('registerBio')?.value?.trim();
+                        const _self = this;
+                        (async () => {
+                            const updates = {};
+                            const uploads = [];
+                            if (_profilePicFile) uploads.push(
+                                window.smartUpload(_profilePicFile, 'avatars', 'avatars').then(url => {
+                                    updates.profile_picture_url = url; updates.avatar_url = url;
+                                    _self.currentUser.avatar_url = url; _self.currentUser.profile_picture_url = url;
+                                }).catch(e => console.warn('Profile pic upload failed:', e))
+                            );
+                            if (_dashFile) uploads.push(
+                                window.smartUpload(_dashFile, 'dashboard-images', 'dashboard').then(url => {
+                                    updates.dashboard_image_url = url;
+                                    _self.currentUser.dashboard_image_url = url;
+                                }).catch(e => console.warn('Dashboard upload failed:', e))
+                            );
+                            if (uploads.length) await Promise.all(uploads);
+                            if (_bio) updates.bio = _bio;
+                            if (Object.keys(updates).length) {
+                                try {
+                                    const setClause = Object.keys(updates).map(k => `${k}: $${k}`).join(', ');
+                                    await window.nhost.graphql.request(
+                                        `mutation UpdateProfile($id: uuid!, ${Object.keys(updates).map(k => `$${k}: String`).join(', ')}) { update_profiles_by_pk(pk_columns: {id: $id}, _set: {${setClause}}) { id } }`,
+                                        { id: _uid, ...updates }
+                                    );
+                                } catch(e) { console.warn('Background profile update failed:', e); }
+                            }
+                            localStorage.setItem('businessconnect_current_user', JSON.stringify(_self.currentUser));
+                            _self.updateAccountAvatar();
+                            _self.loadHomeFeed();
+                        })();
                         
                         // Add to local users array
                         const localUsers = JSON.parse(localStorage.getItem('businessconnect_users') || '[]');
@@ -5045,13 +5095,19 @@
                 if (e && typeof e.preventDefault === 'function') {
                     e.preventDefault();
                 }
-                
+
+                // Show login-form container, hide register-form
+                const loginFormContainer = document.getElementById('login-form');
+                const registerFormContainer = document.getElementById('register-form');
+                if (loginFormContainer) loginFormContainer.style.display = 'block';
+                if (registerFormContainer) registerFormContainer.style.display = 'none';
+
                 const savedAccountsContainer = document.getElementById('savedAccountsContainer');
                 const loginForm = document.getElementById('loginForm');
                 const emailInput = document.getElementById('loginEmail');
                 const passwordInput = document.getElementById('loginPassword');
                 const rememberCheckbox = document.getElementById('rememberMe');
-                
+
                 // Clear form
                 if (emailInput) emailInput.value = '';
                 if (passwordInput) passwordInput.value = '';
@@ -5060,11 +5116,11 @@
                     emailInput.style.background = '';
                     emailInput.style.borderColor = '';
                 }
-                
+
                 // Show login form, hide saved accounts
                 if (savedAccountsContainer) savedAccountsContainer.style.display = 'none';
                 if (loginForm) loginForm.style.display = 'block';
-                
+
                 // Focus on email field
                 if (emailInput) {
                     setTimeout(() => emailInput.focus(), 100);
@@ -5746,10 +5802,25 @@
                 const src = this.currentUser?.profile_picture_url || this.currentUser?.avatar_url;
                 const url = (src && src.startsWith('http') && !src.includes('gravatar')) ? src : null;
                 const name = this.currentUser?.full_name || this.currentUser?.username || '';
+                const initial = name ? name.charAt(0).toUpperCase() : '';
                 const fallbackSvg = `<svg viewBox="0 0 24 24" style="width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/></svg>`;
-                span.innerHTML = url
-                    ? `<img src="${url}" style="width:44px;height:44px;object-fit:cover;border-radius:50%;" onerror="this.parentElement.innerHTML='${name ? `<span style=\'width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#3b82f6,#1e40af);display:flex;align-items:center;justify-content:center;color:white;font-size:18px;font-weight:700;\'>${name.charAt(0).toUpperCase()}</span>` : fallbackSvg}'">`
-                    : (name ? `<span style="width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#3b82f6,#1e40af);display:flex;align-items:center;justify-content:center;color:white;font-size:18px;font-weight:700;">${name.charAt(0).toUpperCase()}</span>` : fallbackSvg);
+                if (url) {
+                    const dispUrl = window.ikDisplayUrl ? window.ikDisplayUrl(url) : url;
+                    const img = document.createElement('img');
+                    img.src = dispUrl;
+                    img.style.cssText = 'width:44px;height:44px;object-fit:cover;border-radius:50%;';
+                    img.onerror = () => {
+                        span.innerHTML = initial
+                            ? `<span style="width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#3b82f6,#1e40af);display:flex;align-items:center;justify-content:center;color:white;font-size:18px;font-weight:700;">${initial}</span>`
+                            : fallbackSvg;
+                    };
+                    span.innerHTML = '';
+                    span.appendChild(img);
+                } else {
+                    span.innerHTML = initial
+                        ? `<span style="width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#3b82f6,#1e40af);display:flex;align-items:center;justify-content:center;color:white;font-size:18px;font-weight:700;">${initial}</span>`
+                        : fallbackSvg;
+                }
             }
 
             async showApp() {
@@ -6006,12 +6077,13 @@
                     if (file.size > 20 * 1024 * 1024) throw new Error('File size must be less than 20MB');
                     this.showNotification('Uploading profile photo...', 'success');
                     const photoUrl = await window.uploadToImageKit(file, 'avatars');
+                    const dispPhotoUrl = window.ikDisplayUrl ? window.ikDisplayUrl(photoUrl) : photoUrl;
                     // Update DB — try Nhost first, fall back to Supabase profiles table
                     let dbOk = false;
                     if (window.isNhostEnabled) {
                         try {
                             const { error: updateError } = await this._nhostRequest(`
-                                mutation UpdateUserAvatar($id: uuid!, $url: String) {
+                                mutation UpdateUserAvatar($id: uuid!, $url: String!) {
                                     update_profiles_by_pk(pk_columns: {id: $id}, _set: {profile_picture_url: $url, avatar_url: $url}) { id }
                                 }
                             `, { id: this.currentUser.id, url: photoUrl });
@@ -6030,9 +6102,9 @@
                     localStorage.setItem('businessconnect_current_user', JSON.stringify(this.currentUser));
                     this.updateAccountAvatar();
                     const profilePreview = document.getElementById('profilePreview');
-                    if (profilePreview) profilePreview.innerHTML = `<img src="${photoUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;">`;
-                    this.loadHomeFeed();
+                    if (profilePreview) profilePreview.innerHTML = `<img src="${dispPhotoUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" onerror="this.src='${photoUrl}'">`;
                     this.showNotification('Profile photo updated successfully!', 'success');
+                    setTimeout(() => this.loadHomeFeed(), 500);
                 } catch (error) {
                     console.error('Error uploading profile photo:', error);
                     this.showNotification(error.message || 'Failed to upload profile photo', 'error');
@@ -6042,7 +6114,7 @@
             async uploadDashboardImage(file) {
                 if (!file) return;
                 try {
-                    this.showNotification('Uploading dashboard picture...', 'info');
+                    this.showNotification('Uploading dashboard picture...', 'success');
                     const imageUrl = await window.smartUpload(file, 'dashboard-images', 'dashboard');
                     if (window.isNhostEnabled) {
                         const { error } = await this._nhostRequest(`
@@ -6055,9 +6127,10 @@
                     this.currentUser.dashboard_image_url = imageUrl;
                     localStorage.setItem('businessconnect_current_user', JSON.stringify(this.currentUser));
                     const preview = document.getElementById('dashboardImgPreview');
-                    if (preview) preview.innerHTML = `<img src="${imageUrl}" style="width:100%;height:100%;object-fit:cover;">`;
-                    this.loadHomeFeed();
+                    const dispImageUrl = window.ikDisplayUrl ? window.ikDisplayUrl(imageUrl) : imageUrl;
+                    if (preview) preview.innerHTML = `<img src="${dispImageUrl}" style="width:100%;height:100%;object-fit:cover;" onerror="this.src='${imageUrl}'">`;
                     this.showNotification('Dashboard picture updated!', 'success');
+                    setTimeout(() => this.loadHomeFeed(), 500);
                 } catch (err) {
                     console.error('Dashboard image upload error:', err);
                     this.showNotification(err.message || 'Upload failed', 'error');
@@ -6194,7 +6267,7 @@
                                         <label>Dashboard Picture</label>
                                         <div style="width:100%;border-radius:12px;overflow:hidden;background:#e2e8f0;height:100px;margin-bottom:8px;position:relative;">
                                             <div id="dashboardImgPreview" style="width:100%;height:100%;">
-                                                ${(() => { const url = this.currentUser.dashboard_image_url && this.currentUser.dashboard_image_url.startsWith('http') ? this.currentUser.dashboard_image_url : null; return url ? `<img src="${url}" style="width:100%;height:100%;object-fit:cover;">` : `<div style="width:100%;height:100%;background:linear-gradient(135deg,#1e40af,#06b6d4);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.5);font-size:13px;">No dashboard picture</div>`; })()
+                                                ${(() => { const rawUrl = this.currentUser.dashboard_image_url && this.currentUser.dashboard_image_url.startsWith('http') ? this.currentUser.dashboard_image_url : null; const url = rawUrl ? (window.ikDisplayUrl ? window.ikDisplayUrl(rawUrl) : rawUrl) : null; return url ? `<img src="${url}" style="width:100%;height:100%;object-fit:cover;">` : `<div style="width:100%;height:100%;background:linear-gradient(135deg,#1e40af,#06b6d4);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.5);font-size:13px;">No dashboard picture</div>`; })()
                                                 }
                                             </div>
                                         </div>
@@ -6338,13 +6411,15 @@
                 const displayName = u?.full_name || u?.username || 'Professional';
                 const _avatarSrc = (() => {
                     const src = u?.profile_picture_url || u?.avatar_url;
-                    return (src && src.startsWith('http') && !src.includes('gravatar')) ? src : null;
+                    const raw = (src && src.startsWith('http') && !src.includes('gravatar')) ? src : null;
+                    return raw ? (window.ikDisplayUrl ? window.ikDisplayUrl(raw) : raw) : null;
                 })();
                 const _initials = displayName.charAt(0).toUpperCase();
                 const avatarHtml = _avatarSrc
                     ? `<img src="${_avatarSrc}" style="width:64px;height:64px;object-fit:cover;border-radius:50%;border:3px solid white;" onerror="this.outerHTML='<div style=\'width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;color:white;font-size:26px;font-weight:700;border:3px solid white;\'>${_initials}</div>'">`
                     : `<div style="width:64px;height:64px;border-radius:50%;background:rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;color:white;font-size:26px;font-weight:700;border:3px solid white;">${_initials}</div>`;
-                const _dashSrc = (u?.dashboard_image_url && u.dashboard_image_url.startsWith('http')) ? u.dashboard_image_url : null;
+                const _dashSrcRaw = (u?.dashboard_image_url && u.dashboard_image_url.startsWith('http')) ? u.dashboard_image_url : null;
+                const _dashSrc = _dashSrcRaw ? (window.ikDisplayUrl ? window.ikDisplayUrl(_dashSrcRaw) : _dashSrcRaw) : null;
                 const hour = new Date().getHours();
                 const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
                 const welcomeCard = `

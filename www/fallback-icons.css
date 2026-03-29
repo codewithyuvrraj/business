@@ -1,0 +1,43 @@
+/* Fallback icons for when Font Awesome fails to load */
+.fas, .fa {
+    font-family: Arial, sans-serif;
+    font-style: normal;
+    font-weight: normal;
+    display: inline-block;
+    text-decoration: none;
+}
+
+/* Common icon fallbacks */
+.fa-bars::before { content: "☰"; }
+.fa-user::before { content: "👤"; }
+.fa-user-circle::before { content: "👤"; }
+.fa-search::before { content: "🔍"; }
+.fa-paper-plane::before { content: "➤"; }
+.fa-plus::before { content: "+"; }
+.fa-times::before { content: "×"; }
+.fa-check::before { content: "✓"; }
+.fa-arrow-left::before { content: "←"; }
+.fa-arrow-right::before { content: "→"; }
+.fa-chevron-down::before { content: "▼"; }
+.fa-chevron-up::before { content: "▲"; }
+.fa-envelope::before { content: "✉"; }
+.fa-bell::before { content: "🔔"; }
+.fa-cog::before { content: "⚙"; }
+.fa-sign-out-alt::before { content: "⏻"; }
+.fa-camera::before { content: "📷"; }
+.fa-upload::before { content: "⬆"; }
+.fa-users::before { content: "👥"; }
+.fa-briefcase::before { content: "💼"; }
+.fa-chart-line::before { content: "📈"; }
+.fa-calendar::before { content: "📅"; }
+.fa-handshake::before { content: "🤝"; }
+.fa-sync-alt::before { content: "🔄"; }
+.fa-layer-group::before { content: "📚"; }
+.fa-broadcast-tower::before { content: "📡"; }
+.fa-satellite-dish::before { content: "📡"; }
+.fa-user-tie::before { content: "👔"; }
+.fa-exchange-alt::before { content: "⇄"; }
+.fa-envelope-open-text::before { content: "📧"; }
+.fa-ellipsis-h::before { content: "⋯"; }
+.fa-image::before { content: "🖼"; }
+.fa-exclamation-triangle::before { content: "⚠"; }
